@@ -332,6 +332,12 @@
                 <input type="number" id="highIllumination" step="0.01" placeholder="e.g., 5.0">
                 
                 <button onclick="updatePlot()">Update Illumination Range</button>
+                <button onclick="checkSufficiency()">🔍 Check PV-IoT Sufficiency</button>
+            </div>
+            
+            <div class="panel" id="sufficiencyResults" style="display: none;">
+                <h2>✅ Sufficiency Analysis Results</h2>
+                <div id="sufficiencyContent" style="font-size: 13px; line-height: 1.6;"></div>
             </div>
         </div>
 
