@@ -199,6 +199,8 @@
             padding: 12px;
             background-color: #0f1923;
             border-radius: 6px;
+            border: 2px solid transparent;
+            transition: border-color 0.3s;
         }
 
         .slider-label {
@@ -285,6 +287,51 @@
             .container {
                 grid-template-columns: 1fr;
             }
+        }
+
+        .sufficiency-item {
+            background-color: #0f1923;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border-left: 4px solid #2563eb;
+        }
+
+        .sufficiency-item.excellent {
+            border-left-color: #10b981;
+        }
+
+        .sufficiency-item.good {
+            border-left-color: #f59e0b;
+        }
+
+        .sufficiency-item.poor {
+            border-left-color: #ef4444;
+        }
+
+        .coverage-bar {
+            height: 8px;
+            background-color: #1e3a5f;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+
+        .coverage-fill {
+            height: 100%;
+            transition: width 0.5s ease;
+        }
+
+        .coverage-fill.excellent {
+            background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+        }
+
+        .coverage-fill.good {
+            background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%);
+        }
+
+        .coverage-fill.poor {
+            background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
         }
     </style>
 </head>
@@ -484,6 +531,9 @@
                         tooltip: {
                             mode: 'index',
                             intersect: false
+                        },
+                        annotation: {
+                            annotations: {}
                         }
                     }
                 }
@@ -698,6 +748,158 @@
             selectedCurves.clear();
             updateCurveListbox();
             updatePlot();
+            
+            // Hide sufficiency results if IoT devices are removed
+            if (Object.keys(iotDevices).length === 0) {
+                document.getElementById('sufficiencyResults').style.display = 'none';
+            }
+        }
+
+        // Check sufficiency of PV devices for IoT devices
+        function checkSufficiency() {
+            const lowIllum = parseFloat(document.getElementById('lowIllumination').value);
+            const highIllum = parseFloat(document.getElementById('highIllumination').value);
+
+            if (isNaN(lowIllum) || isNaN(highIllum)) {
+                alert('Please enter valid illumination range values');
+                return;
+            }
+
+            if (lowIllum >= highIllum) {
+                alert('Lowest illumination must be less than highest illumination');
+                return;
+            }
+
+            if (Object.keys(iotDevices).length === 0) {
+                alert('Please add at least one IoT device first');
+                return;
+            }
+
+            if (Object.keys(pvData).length === 0) {
+                alert('Please load at least one PV data file first');
+                return;
+            }
+
+            const resultsContent = document.getElementById('sufficiencyContent');
+            resultsContent.innerHTML = '';
+            
+            let hasResults = false;
+
+            Object.entries(iotDevices).forEach(([iotName, device]) => {
+                let bestCoverage = 0;
+                let bestPV = null;
+                const pvResults = [];
+
+                Object.entries(pvData).forEach(([pvName, data]) => {
+                    // Filter data within illumination range
+                    const relevantData = data.filter(d => d[0] >= lowIllum && d[0] <= highIllum);
+                    
+                    if (relevantData.length === 0) return;
+
+                    let countMet = 0;
+                    let surplusSum = 0;
+                    const lossMultiplier = 1 - (lossFactor / 100);
+
+                    relevantData.forEach(([illum, eff]) => {
+                        const pgd = illum * eff / 100 * lossMultiplier;
+                        if (pgd >= device.pcd) {
+                            countMet++;
+                        }
+                        surplusSum += (pgd - device.pcd);
+                    });
+
+                    const coverage = (countMet / relevantData.length) * 100;
+                    const avgSurplus = surplusSum / relevantData.length;
+
+                    pvResults.push({ pvName, coverage, avgSurplus });
+
+                    if (coverage > bestCoverage) {
+                        bestCoverage = coverage;
+                        bestPV = pvName;
+                    }
+                });
+
+                // Update slider border color
+                const sliderDiv = document.getElementById(`slider-${iotName}`);
+                if (sliderDiv) {
+                    if (bestCoverage >= 90) {
+                        sliderDiv.style.borderColor = '#10b981';
+                    } else if (bestCoverage >= 50) {
+                        sliderDiv.style.borderColor = '#f59e0b';
+                    } else {
+                        sliderDiv.style.borderColor = '#ef4444';
+                    }
+                }
+
+                // Create results display
+                if (pvResults.length > 0) {
+                    hasResults = true;
+                    const iotDiv = document.createElement('div');
+                    iotDiv.style.marginBottom = '20px';
+                    
+                    let statusClass = 'poor';
+                    let statusText = '❌ Poor';
+                    let statusColor = '#ef4444';
+                    
+                    if (bestCoverage >= 90) {
+                        statusClass = 'excellent';
+                        statusText = '✅ Excellent';
+                        statusColor = '#10b981';
+                    } else if (bestCoverage >= 50) {
+                        statusClass = 'good';
+                        statusText = '⚠️ Moderate';
+                        statusColor = '#f59e0b';
+                    }
+
+                    iotDiv.innerHTML = `
+                        <div class="sufficiency-item ${statusClass}">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <strong style="color: #60a5fa; font-size: 14px;">${iotName}</strong>
+                                <span style="color: ${statusColor}; font-weight: 600;">${statusText}</span>
+                            </div>
+                            <div style="color: #94a3b8; font-size: 12px; margin-bottom: 8px;">
+                                Required PCD: ${device.pcd.toFixed(2)} mW/cm² | Illumination: ${lowIllum}-${highIllum} mW/cm²
+                            </div>
+                        </div>
+                    `;
+
+                    pvResults.sort((a, b) => b.coverage - a.coverage).forEach(result => {
+                        let coverageClass = 'poor';
+                        if (result.coverage >= 90) coverageClass = 'excellent';
+                        else if (result.coverage >= 50) coverageClass = 'good';
+
+                        const pvResult = document.createElement('div');
+                        pvResult.style.marginLeft = '10px';
+                        pvResult.style.marginTop = '10px';
+                        pvResult.style.padding = '10px';
+                        pvResult.style.backgroundColor = '#0f1923';
+                        pvResult.style.borderRadius = '6px';
+                        
+                        pvResult.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                <span style="color: #cbd5e1;">${result.pvName}</span>
+                                <span style="color: #60a5fa; font-weight: 600;">${result.coverage.toFixed(1)}% coverage</span>
+                            </div>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill ${coverageClass}" style="width: ${result.coverage}%;"></div>
+                            </div>
+                            <div style="font-size: 12px; color: #94a3b8;">
+                                Avg. Surplus: ${result.avgSurplus >= 0 ? '+' : ''}${result.avgSurplus.toFixed(3)} mW/cm²
+                            </div>
+                        `;
+                        
+                        iotDiv.appendChild(pvResult);
+                    });
+
+                    resultsContent.appendChild(iotDiv);
+                }
+            });
+
+            if (hasResults) {
+                document.getElementById('sufficiencyResults').style.display = 'block';
+            } else {
+                alert('No PV data found in the specified illumination range');
+            }
         }
 
         // Update plot
